@@ -245,7 +245,7 @@ const avatarEmojis = [
   "🦚",
   "🌟",
 ];
-const getAvatar = (n) =>
+const getAvatar = (n: string) =>
   avatarEmojis[
     n.split("").reduce((a, c) => a + c.charCodeAt(0), 0) % avatarEmojis.length
   ];
