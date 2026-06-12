@@ -524,17 +524,18 @@ export default function App() {
     showToast("🔄 ¡Intercambio realizado!");
   };
 
-  const login = () => {
-    const n = inputName.trim();
-    if (!n) return;
-    const nd = { ...data };
-    if (!nd.users[n]) nd.users[n] = { cards: {}, lastPack: null };
-    setData(nd);
-    saveData(nd);
-    setUsername(n);
-    setScreen("album");
-    setLastPack([]);
-  };
+const login = async () => {
+  const n = inputName.trim(); if (!n) return;
+  const currentData = await loadData();
+  if (!currentData.users[n]) {
+    currentData.users[n] = { cards:{}, lastPack:null };
+    await saveData(currentData);
+  }
+  setData(currentData);
+  setUsername(n); 
+  setScreen("album");
+  setLastPack([]);
+};
 
   if (loading)
     return (
