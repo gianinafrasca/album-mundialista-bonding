@@ -1,5 +1,16 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  setDoc,
+  collection,
+  getDocs,
+  addDoc,
+  updateDoc,
+  query,
+  where,
+} from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyB-n7nh-sNLYfvFGwsn_sirnfMFaZbqdsw",
@@ -13,25 +24,51 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 
-const MAIN_DOC = "pulpito_album";
-const COL = "data";
+// ─── USUARIOS ────────────────────────────────────────────────────────────────
 
-export async function loadData() {
-  try {
-    const ref = doc(db, COL, MAIN_DOC);
-    const snap = await getDoc(ref);
-    return snap.exists() ? snap.data() : { users: {}, trades: [] };
-  } catch (e) {
-    console.error("Error loading:", e);
-    return { users: {}, trades: [] };
-  }
+// Obtiene un usuario por EID
+export async function getUser(eid) {
+  const ref = doc(db, "users", eid);
+  const snap = await getDoc(ref);
+  return snap.exists() ? { eid, ...snap.data() } : null;
 }
 
-export async function saveData(data: any) {
-  try {
-    const ref = doc(db, COL, MAIN_DOC);
-    await setDoc(ref, data);
-  } catch (e) {
-    console.error("Error saving:", e);
-  }
+// Crea un usuario nuevo
+export async function createUser(eid) {
+  const ref = doc(db, "users", eid);
+  const userData = { cards: {}, lastPack: null };
+  await setDoc(ref, userData);
+  return { eid, ...userData };
+}
+
+// Guarda datos de un usuario (solo toca su documento)
+export async function saveUser(eid, userData) {
+  const ref = doc(db, "users", eid);
+  await setDoc(ref, userData);
+}
+
+// Obtiene todos los usuarios (para ranking)
+export async function getAllUsers() {
+  const snap = await getDocs(collection(db, "users"));
+  return snap.docs.map((d) => ({ eid: d.id, ...d.data() }));
+}
+
+// ─── TRADES ──────────────────────────────────────────────────────────────────
+
+// Obtiene todos los trades abiertos
+export async function getTrades() {
+  const snap = await getDocs(collection(db, "trades"));
+  return snap.docs.map((d) => ({ docId: d.id, ...d.data() }));
+}
+
+// Crea un nuevo trade
+export async function createTrade(trade) {
+  const ref = await addDoc(collection(db, "trades"), trade);
+  return { docId: ref.id, ...trade };
+}
+
+// Acepta un trade (actualiza estado)
+export async function acceptTradeInDB(docId, acceptedBy) {
+  const ref = doc(db, "trades", docId);
+  await updateDoc(ref, { status: "done", acceptedBy });
 }
