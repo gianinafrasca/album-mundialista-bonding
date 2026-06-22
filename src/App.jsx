@@ -185,7 +185,7 @@ export default function App() {
     setScreen("album");
   };
 
-  const refreshTrades = async () => {
+const refreshTrades = async () => {
     const tradesData = await getTrades();
     setTrades(tradesData);
   };
@@ -194,6 +194,17 @@ export default function App() {
     const usersData = await getAllUsers();
     setAllUsers(usersData);
   };
+
+  // Auto-refresh cada 30 segundos
+  useEffect(() => {
+    if (!username) return;
+    const interval = setInterval(async () => {
+      const [tradesData, usersData] = await Promise.all([getTrades(), getAllUsers()]);
+      setTrades(tradesData);
+      setAllUsers(usersData);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [username]);
 
   const openPack = async () => {
     if (!canOpen()) { showToast("⏰ Ya abriste tu sobre hoy. ¡Volvé mañana!"); return; }
