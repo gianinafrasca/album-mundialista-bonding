@@ -225,6 +225,9 @@ export default function App() {
   const proposeTrade = async () => {
     if (!tradeGive || !tradeWant) { showToast("Seleccioná qué ofrecés y qué pedís"); return; }
     if ((owned[tradeGive] || 0) < 2) { showToast("Necesitás tenerla repetida para ofrecerla"); return; }
+    // Fix 1: no permitir más de un trade abierto por figurita
+    const alreadyOpen = trades.some(t => t.from === username && t.give === tradeGive && t.status === "open");
+    if (alreadyOpen) { showToast("⚠️ Ya tenés un intercambio abierto con esa figurita"); return; }
     const trade = { id: Date.now(), from: username, give: tradeGive, want: tradeWant, status: "open", ts: new Date().toISOString() };
     const newTrade = await createTrade(trade);
     setTrades((prev) => [...prev, newTrade]);
