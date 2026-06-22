@@ -1,6 +1,6 @@
 import "./styles.css";
 import { useState, useEffect } from "react";
-import { loadData, saveData } from "./firebase";
+import { getUser, createUser, saveUser, getAllUsers, getTrades, createTrade, acceptTradeInDB } from "./firebase";
 
 const ACCENT = "#A100FF";
 const ACCENT2 = "#7800C4";
@@ -89,8 +89,7 @@ function FiguModal({ figu, repeated, onClose }) {
         {figu.rare && <div className="absolute -top-3 left-1/2 -translate-x-1/2 text-2xl">⭐</div>}
         {imgUrl
           ? <img src={imgUrl} alt={figu.name} className="rounded-2xl" style={{ width: "180px", height: "240px", objectFit: "contain" }} />
-          : <div style={{ fontSize: "5rem" }}>🐙</div>
-        }
+          : <div style={{ fontSize: "5rem" }}>🐙</div>}
         <div className="font-black text-center mt-3 text-base" style={{ color: "#1a0033" }}>{figu.name}</div>
         <div className="text-center text-xs mt-1 text-gray-500">{figu.sub}</div>
         <div className="mt-2 text-xs font-bold px-3 py-1 rounded-full"
@@ -122,16 +121,13 @@ function FiguCard({ figu, owned, repeated, small, onClick }) {
       }}>
       {owned && imgUrl
         ? <img src={imgUrl} alt={figu.name} style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: "10px", padding: "2px" }} />
-        : <div style={{ fontSize: small ? "1.6rem" : "3.2rem" }}>❓</div>
-      }
+        : <div style={{ fontSize: small ? "1.6rem" : "3.2rem" }}>❓</div>}
       {!small && figu.rare && owned && <div className="absolute top-1 right-1" style={{ fontSize: "0.65rem", color: "#f59e0b" }}>⭐</div>}
       {repeated > 1 && owned && (
         <div className="absolute top-0 right-0 text-white rounded-full w-4 h-4 flex items-center justify-center"
-          style={{ fontSize: "0.55rem", transform: "translate(35%,-35%)", background: ACCENT }}>×{repeated}</div>
-      )}
+          style={{ fontSize: "0.55rem", transform: "translate(35%,-35%)", background: ACCENT }}>×{repeated}</div>)}
       {!owned && !small && (
-        <div className="absolute bottom-1 left-0 right-0 text-center" style={{ color: "#3d0070", fontSize: "0.48rem" }}>#{figu.id.slice(1)}</div>
-      )}
+        <div className="absolute bottom-1 left-0 right-0 text-center" style={{ color: "#3d0070", fontSize: "0.48rem" }}>#{figu.id.slice(1)}</div>)}
     </div>
   );
 }
@@ -140,7 +136,9 @@ export default function App() {
   const [screen, setScreen] = useState("login");
   const [username, setUsername] = useState("");
   const [inputName, setInputName] = useState("");
-  const [data, setData] = useState(null);
+  const [myData, setMyData] = useState(null); // datos del usuario actual
+  const [allUsers, setAllUsers] = useState([]); // para el ranking
+  const [trades, setTrades] = useState([]); // lista de intercambios
   const [loading, setLoading] = useState(true);
   const [lastPack, setLastPack] = useState([]);
   const [lastPackUser, setLastPackUser] = useState("");
@@ -150,21 +148,52 @@ export default function App() {
   const [tradeWant, setTradeWant] = useState("");
   const [tradeTab, setTradeTab] = useState("open");
   const [modalFigu, setModalFigu] = useState(null);
+  const [knownEids, setKnownEids] = useState([]);
 
+  // Carga inicial: solo EIDs conocidos para el selector del login
   useEffect(() => {
-    loadData().then((d) => { setData(d); setLoading(false); });
+    getAllUsers().then((users) => {
+      setKnownEids(users.map((u) => u.eid).sort());
+      setLoading(false);
+    });
   }, []);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 3000); };
 
-  const me = data?.users?.[username] || { cards: {}, lastPack: null };
-  const owned = me.cards || {};
+  const owned = myData?.cards || {};
   const totalOwned = Object.keys(owned).length;
   const repeatedIds = Object.entries(owned).filter(([, v]) => v > 1).map(([k]) => k);
   const missingIds = FIGUS.filter((f) => !owned[f.id]).map((f) => f.id);
   const figu = (id) => FIGUS.find((f) => f.id === id);
 
-  const canOpen = () => !me.lastPack || new Date(me.lastPack).toDateString() !== new Date().toDateString();
+  const canOpen = () => !myData?.lastPack || new Date(myData.lastPack).toDateString() !== new Date().toDateString();
+
+  const login = async () => {
+    const n = inputName.trim(); if (!n) return;
+    setLoading(true);
+    let user = await getUser(n);
+    if (!user) user = await createUser(n);
+    setMyData(user);
+    setUsername(n);
+    // Carga trades y ranking
+    const [tradesData, usersData] = await Promise.all([getTrades(), getAllUsers()]);
+    setTrades(tradesData);
+    setAllUsers(usersData);
+    setKnownEids(usersData.map((u) => u.eid).sort());
+    setLastPack([]);
+    setLoading(false);
+    setScreen("album");
+  };
+
+  const refreshTrades = async () => {
+    const tradesData = await getTrades();
+    setTrades(tradesData);
+  };
+
+  const refreshRanking = async () => {
+    const usersData = await getAllUsers();
+    setAllUsers(usersData);
+  };
 
   const openPack = async () => {
     if (!canOpen()) { showToast("⏰ Ya abriste tu sobre hoy. ¡Volvé mañana!"); return; }
@@ -179,14 +208,13 @@ export default function App() {
         : normalIds[Math.floor(Math.random() * normalIds.length)];
       newPack.push(pickedId);
     }
-    // Carga datos frescos antes de guardar para evitar race conditions
-    const freshData = await loadData();
-    const userCards = freshData.users[username]?.cards || {};
-    const u = { ...freshData.users[username], cards: { ...userCards }, lastPack: new Date().toISOString() };
-    newPack.forEach((id) => { u.cards[id] = (u.cards[id] || 0) + 1; });
-    freshData.users[username] = u;
-    setData(freshData);
-    await saveData(freshData);
+    // Carga datos frescos del usuario actual (solo su documento)
+    const freshUser = await getUser(username);
+    const updatedCards = { ...freshUser.cards };
+    newPack.forEach((id) => { updatedCards[id] = (updatedCards[id] || 0) + 1; });
+    const updatedUser = { ...freshUser, cards: updatedCards, lastPack: new Date().toISOString() };
+    await saveUser(username, { cards: updatedCards, lastPack: updatedUser.lastPack });
+    setMyData(updatedUser);
     setLastPack([...newPack]);
     setLastPackUser(username);
     setOpening(false);
@@ -197,13 +225,9 @@ export default function App() {
   const proposeTrade = async () => {
     if (!tradeGive || !tradeWant) { showToast("Seleccioná qué ofrecés y qué pedís"); return; }
     if ((owned[tradeGive] || 0) < 2) { showToast("Necesitás tenerla repetida para ofrecerla"); return; }
-    // Carga datos frescos antes de guardar
-    const freshData = await loadData();
-    freshData.trades = [...(freshData.trades || []), {
-      id: Date.now(), from: username, give: tradeGive, want: tradeWant, status: "open", ts: new Date().toISOString()
-    }];
-    setData(freshData);
-    await saveData(freshData);
+    const trade = { id: Date.now(), from: username, give: tradeGive, want: tradeWant, status: "open", ts: new Date().toISOString() };
+    const newTrade = await createTrade(trade);
+    setTrades((prev) => [...prev, newTrade]);
     setTradeGive(""); setTradeWant("");
     showToast("✅ ¡Oferta publicada!");
   };
@@ -212,35 +236,28 @@ export default function App() {
     if (t.from === username) { showToast("No podés aceptar tu propia oferta"); return; }
     if (!owned[t.want]) { showToast("No tenés esa figurita"); return; }
     if (owned[t.give]) { showToast("¡Ya tenés esa figurita!"); return; }
-    // Carga datos frescos antes de guardar
-    const freshData = await loadData();
-    const from = { ...freshData.users[t.from], cards: { ...freshData.users[t.from].cards } };
-    from.cards[t.want] = (from.cards[t.want] || 0) + 1;
-    from.cards[t.give] = Math.max(0, (from.cards[t.give] || 0) - 1);
-    if (!from.cards[t.give]) delete from.cards[t.give];
-    freshData.users[t.from] = from;
-    const myU = { ...freshData.users[username], cards: { ...freshData.users[username].cards } };
-    myU.cards[t.give] = (myU.cards[t.give] || 0) + 1;
-    myU.cards[t.want] = Math.max(0, (myU.cards[t.want] || 0) - 1);
-    if (!myU.cards[t.want]) delete myU.cards[t.want];
-    freshData.users[username] = myU;
-    freshData.trades = freshData.trades.map((x) => x.id === t.id ? { ...x, status: "done", acceptedBy: username } : x);
-    setData(freshData);
-    await saveData(freshData);
-    showToast("🔄 ¡Intercambio realizado!");
-  };
 
-  const login = async () => {
-    const n = inputName.trim(); if (!n) return;
-    const currentData = await loadData();
-    if (!currentData.users[n]) {
-      currentData.users[n] = { cards: {}, lastPack: null };
-      await saveData(currentData);
-    }
-    setData(currentData);
-    setUsername(n);
-    setScreen("album");
-    setLastPack([]);
+    // Actualiza al usuario que ofreció (carga su documento fresco)
+    const fromUser = await getUser(t.from);
+    const fromCards = { ...fromUser.cards };
+    fromCards[t.want] = (fromCards[t.want] || 0) + 1;
+    fromCards[t.give] = Math.max(0, (fromCards[t.give] || 0) - 1);
+    if (!fromCards[t.give]) delete fromCards[t.give];
+    await saveUser(t.from, { ...fromUser, cards: fromCards });
+
+    // Actualiza al usuario actual (carga su documento fresco)
+    const myFresh = await getUser(username);
+    const myCards = { ...myFresh.cards };
+    myCards[t.give] = (myCards[t.give] || 0) + 1;
+    myCards[t.want] = Math.max(0, (myCards[t.want] || 0) - 1);
+    if (!myCards[t.want]) delete myCards[t.want];
+    await saveUser(username, { ...myFresh, cards: myCards });
+    setMyData({ ...myFresh, cards: myCards });
+
+    // Cierra el trade
+    await acceptTradeInDB(t.docId, username);
+    setTrades((prev) => prev.map((x) => x.docId === t.docId ? { ...x, status: "done", acceptedBy: username } : x));
+    showToast("🔄 ¡Intercambio realizado!");
   };
 
   if (loading) return (
@@ -268,11 +285,11 @@ export default function App() {
           style={{ background: `linear-gradient(135deg,${ACCENT2},${ACCENT})` }}>
           ¡Entrar al Álbum!
         </button>
-        {Object.keys(data.users).length > 0 && (
+        {knownEids.length > 0 && (
           <div className="mt-4">
             <div className="text-xs mb-2 text-center" style={{ color: "#9061c2" }}>¿Ya jugaste antes? Elegí tu EID:</div>
             <div className="flex flex-wrap gap-1 justify-center max-h-24 overflow-y-auto">
-              {Object.keys(data.users).sort().map((u) => (
+              {knownEids.map((u) => (
                 <button key={u} onClick={() => setInputName(u)} className="px-2 py-1 rounded-lg text-xs font-mono"
                   style={{ background: inputName === u ? ACCENT : "#2d0050", color: inputName === u ? "white" : "#d8b4fe", border: `1px solid ${ACCENT}44` }}>
                   {u}
@@ -301,7 +318,7 @@ export default function App() {
         <div className="text-right flex flex-col items-end gap-1">
           <div className="text-xs" style={{ color: "#d8b4fe" }}>Completado</div>
           <div className="font-black text-xl">{Math.round((totalOwned / TOTAL) * 100)}%</div>
-          <button onClick={() => { setUsername(""); setScreen("login"); setLastPack([]); }}
+          <button onClick={() => { setUsername(""); setMyData(null); setScreen("login"); setLastPack([]); }}
             className="text-xs px-2 py-0.5 rounded-full font-bold"
             style={{ background: "#3d0070", color: "#d8b4fe" }}>Salir</button>
         </div>
@@ -375,7 +392,8 @@ export default function App() {
             <h2 className="text-xl font-black mb-4" style={{ color: "#e9d5ff" }}>🔄 Intercambios</h2>
             <div className="flex gap-2 mb-4">
               {[["open","Publicar"],["my","Mis ofertas"]].map(([t, l]) => (
-                <button key={t} onClick={() => setTradeTab(t)} className="px-4 py-1.5 rounded-full text-sm font-bold"
+                <button key={t} onClick={() => { setTradeTab(t); if(t==="open") refreshTrades(); }}
+                  className="px-4 py-1.5 rounded-full text-sm font-bold"
                   style={{ background: tradeTab === t ? ACCENT : "#2d0050", color: tradeTab === t ? "white" : "#d8b4fe" }}>{l}</button>
               ))}
             </div>
@@ -402,10 +420,10 @@ export default function App() {
                   </button>
                 </div>
                 <div className="font-semibold mb-2 text-sm" style={{ color: "#d8b4fe" }}>Ofertas disponibles</div>
-                {(data.trades || []).filter((t) => t.status === "open" && t.from !== username).length === 0
+                {trades.filter((t) => t.status === "open" && t.from !== username).length === 0
                   ? <p className="text-sm" style={{ color: "#6b3fa0" }}>No hay ofertas disponibles ahora.</p>
-                  : (data.trades || []).filter((t) => t.status === "open" && t.from !== username).map((t) => (
-                    <div key={t.id} className="rounded-2xl p-3 mb-2 flex items-center justify-between"
+                  : trades.filter((t) => t.status === "open" && t.from !== username).map((t) => (
+                    <div key={t.docId} className="rounded-2xl p-3 mb-2 flex items-center justify-between"
                       style={{ background: "#2d0050", border: `1px solid ${ACCENT}33` }}>
                       <div className="text-sm flex-1 mr-2">
                         <div className="font-bold" style={{ color: "#e9d5ff" }}>{getAvatar(t.from)} {t.from}</div>
@@ -420,10 +438,10 @@ export default function App() {
               </>
             )}
             {tradeTab === "my" && (
-              (data.trades || []).filter((t) => t.from === username).length === 0
+              trades.filter((t) => t.from === username).length === 0
                 ? <p className="text-sm" style={{ color: "#6b3fa0" }}>No publicaste ofertas todavía.</p>
-                : (data.trades || []).filter((t) => t.from === username).reverse().map((t) => (
-                  <div key={t.id} className="rounded-2xl p-3 mb-2" style={{ background: "#2d0050", border: `1px solid ${ACCENT}33` }}>
+                : trades.filter((t) => t.from === username).reverse().map((t) => (
+                  <div key={t.docId} className="rounded-2xl p-3 mb-2" style={{ background: "#2d0050", border: `1px solid ${ACCENT}33` }}>
                     <div className="flex justify-between items-start">
                       <div className="text-sm">
                         <div className="text-xs" style={{ color: "#9061c2" }}>Da: <b style={{ color: "#d8b4fe" }}>{figu(t.give)?.name}</b></div>
@@ -442,8 +460,12 @@ export default function App() {
         {screen === "ranking" && (
           <div className="p-4">
             <h2 className="text-xl font-black mb-4" style={{ color: "#e9d5ff" }}>🏆 Ranking de la Tribu</h2>
-            {Object.entries(data.users)
-              .map(([name, u]) => ({ name, count: Object.keys(u.cards || {}).length }))
+            <button onClick={refreshRanking} className="mb-4 text-xs px-3 py-1 rounded-full font-bold"
+              style={{ background: "#2d0050", color: "#d8b4fe", border: `1px solid ${ACCENT}44` }}>
+              🔄 Actualizar ranking
+            </button>
+            {allUsers
+              .map((u) => ({ name: u.eid, count: Object.keys(u.cards || {}).length }))
               .sort((a, b) => b.count - a.count)
               .map((u, i) => (
                 <div key={u.name} className="flex items-center gap-3 p-3 rounded-2xl mb-2"
@@ -475,7 +497,7 @@ export default function App() {
             <span className="font-bold">{label}</span>
           </button>
         ))}
-        <button onClick={() => { setUsername(""); setScreen("login"); setLastPack([]); }}
+        <button onClick={() => { setUsername(""); setMyData(null); setScreen("login"); setLastPack([]); }}
           className="flex-1 py-2 flex flex-col items-center text-xs transition-all"
           style={{ color: "#6b3fa0" }}>
           <span className="text-xl">🚪</span>
@@ -484,7 +506,6 @@ export default function App() {
       </div>
 
       {modalFigu && <FiguModal figu={modalFigu} repeated={owned[modalFigu.id] || 1} onClose={() => setModalFigu(null)} />}
-
       {toast && (
         <div className="fixed top-4 left-1/2 transform -translate-x-1/2 text-white px-5 py-2 rounded-full text-sm shadow-xl z-50 whitespace-nowrap"
           style={{ background: "#1a0033", border: `1px solid ${ACCENT}66` }}>
