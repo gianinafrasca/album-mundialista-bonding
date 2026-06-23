@@ -136,9 +136,9 @@ export default function App() {
   const [screen, setScreen] = useState("login");
   const [username, setUsername] = useState("");
   const [inputName, setInputName] = useState("");
-  const [myData, setMyData] = useState(null); // datos del usuario actual
-  const [allUsers, setAllUsers] = useState([]); // para el ranking
-  const [trades, setTrades] = useState([]); // lista de intercambios
+  const [myData, setMyData] = useState(null);
+  const [allUsers, setAllUsers] = useState([]);
+  const [trades, setTrades] = useState([]);
   const [loading, setLoading] = useState(true);
   const [lastPack, setLastPack] = useState([]);
   const [lastPackUser, setLastPackUser] = useState("");
@@ -147,16 +147,30 @@ export default function App() {
   const [tradeGive, setTradeGive] = useState("");
   const [tradeWant, setTradeWant] = useState("");
   const [tradeTab, setTradeTab] = useState("open");
-  const [packLocked, setPackLocked] = useState(false); // Fix 3: evita doble click
+  const [packLocked, setPackLocked] = useState(false);
   const [knownEids, setKnownEids] = useState([]);
+  const [modalFigu, setModalFigu] = useState(null); // ← FIX: estaba faltando
 
-  // Carga inicial: solo EIDs conocidos para el selector del login
   useEffect(() => {
     getAllUsers().then((users) => {
       setKnownEids(users.map((u) => u.eid).sort());
       setLoading(false);
     });
   }, []);
+
+  // Auto-refresh cada 30 segundos (trades, ranking y datos propios)
+  useEffect(() => {
+    if (!username) return;
+    const interval = setInterval(async () => {
+      const [tradesData, usersData, freshMe] = await Promise.all([
+        getTrades(), getAllUsers(), getUser(username)
+      ]);
+      setTrades(tradesData);
+      setAllUsers(usersData);
+      if (freshMe) setMyData(freshMe);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [username]);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 3000); };
 
@@ -173,7 +187,6 @@ export default function App() {
     setLoading(true);
     let user = await getUser(n);
     if (!user) {
-      // Fix 2: nuevos usuarios arrancan con 10 figus aleatorias
       const rareIds = FIGUS.filter(f => f.rare).map(f => f.id);
       const normalIds = FIGUS.filter(f => !f.rare).map(f => f.id);
       const cards = {};
@@ -211,7 +224,7 @@ export default function App() {
 
   const openPack = async () => {
     if (!canOpen()) { showToast("⏰ Ya abriste tu sobre hoy. ¡Volvé mañana!"); return; }
-    if (packLocked) return; // Fix 3: bloquea doble click
+    if (packLocked) return;
     setPackLocked(true);
     setOpening(true);
     await new Promise((r) => setTimeout(r, 900));
@@ -224,7 +237,6 @@ export default function App() {
         : normalIds[Math.floor(Math.random() * normalIds.length)];
       newPack.push(pickedId);
     }
-    // Carga datos frescos del usuario actual (solo su documento)
     const freshUser = await getUser(username);
     const updatedCards = { ...freshUser.cards };
     newPack.forEach((id) => { updatedCards[id] = (updatedCards[id] || 0) + 1; });
@@ -234,7 +246,7 @@ export default function App() {
     setLastPack([...newPack]);
     setLastPackUser(username);
     setOpening(false);
-    setPackLocked(false); // Fix 3: desbloquea después de abrir
+    setPackLocked(false);
     const news = newPack.filter((id) => !owned[id]).length;
     showToast(news > 0 ? `🎴 ¡${news} figurita${news > 1 ? "s nuevas" : " nueva"}!` : "🔄 Repetidas — ¡a intercambiar!");
   };
@@ -242,10 +254,8 @@ export default function App() {
   const proposeTrade = async () => {
     if (!tradeGive || !tradeWant) { showToast("Seleccioná qué ofrecés y qué pedís"); return; }
     if ((owned[tradeGive] || 0) < 2) { showToast("Necesitás tenerla repetida para ofrecerla"); return; }
-    // Fix 1: no permitir más de un trade abierto por figurita
     const alreadyOpen = trades.some(t => t.from === username && t.give === tradeGive && t.status === "open");
     if (alreadyOpen) { showToast("⚠️ Ya tenés un intercambio abierto con esa figurita"); return; }
-    // Fix 5: límite de 5 trades abiertos por usuario
     const myOpenTrades = trades.filter(t => t.from === username && t.status === "open").length;
     if (myOpenTrades >= 5) { showToast("⚠️ Máximo 5 intercambios abiertos a la vez"); return; }
     const trade = { id: Date.now(), from: username, give: tradeGive, want: tradeWant, status: "open", ts: new Date().toISOString() };
@@ -260,15 +270,19 @@ export default function App() {
     if (!owned[t.want]) { showToast("No tenés esa figurita"); return; }
     if (owned[t.give]) { showToast("¡Ya tenés esa figurita!"); return; }
 
-    // Actualiza al usuario que ofreció (carga su documento fresco)
+    // Fix 4: verificar que el oferente todavía existe y tiene la figurita
     const fromUser = await getUser(t.from);
+    if (!fromUser || (fromUser.cards[t.give] || 0) < 1) {
+      showToast("⚠️ El oferente ya no tiene esa figurita disponible");
+      return;
+    }
+
     const fromCards = { ...fromUser.cards };
     fromCards[t.want] = (fromCards[t.want] || 0) + 1;
     fromCards[t.give] = Math.max(0, (fromCards[t.give] || 0) - 1);
     if (!fromCards[t.give]) delete fromCards[t.give];
     await saveUser(t.from, { ...fromUser, cards: fromCards });
 
-    // Actualiza al usuario actual (carga su documento fresco)
     const myFresh = await getUser(username);
     const myCards = { ...myFresh.cards };
     myCards[t.give] = (myCards[t.give] || 0) + 1;
@@ -277,7 +291,6 @@ export default function App() {
     await saveUser(username, { ...myFresh, cards: myCards });
     setMyData({ ...myFresh, cards: myCards });
 
-    // Cierra el trade
     await acceptTradeInDB(t.docId, username);
     setTrades((prev) => prev.map((x) => x.docId === t.docId ? { ...x, status: "done", acceptedBy: username } : x));
     showToast("🔄 ¡Intercambio realizado!");
