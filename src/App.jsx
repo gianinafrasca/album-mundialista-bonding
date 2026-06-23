@@ -147,7 +147,7 @@ export default function App() {
   const [tradeGive, setTradeGive] = useState("");
   const [tradeWant, setTradeWant] = useState("");
   const [tradeTab, setTradeTab] = useState("open");
-  const [modalFigu, setModalFigu] = useState(null);
+  const [packLocked, setPackLocked] = useState(false); // Fix 3: evita doble click
   const [knownEids, setKnownEids] = useState([]);
 
   // Carga inicial: solo EIDs conocidos para el selector del login
@@ -172,10 +172,24 @@ export default function App() {
     const n = inputName.trim(); if (!n) return;
     setLoading(true);
     let user = await getUser(n);
-    if (!user) user = await createUser(n);
+    if (!user) {
+      // Fix 2: nuevos usuarios arrancan con 10 figus aleatorias
+      const rareIds = FIGUS.filter(f => f.rare).map(f => f.id);
+      const normalIds = FIGUS.filter(f => !f.rare).map(f => f.id);
+      const cards = {};
+      let attempts = 0;
+      while (Object.keys(cards).length < 10 && attempts < 100) {
+        attempts++;
+        const isRare = Math.random() < 0.15 && rareIds.length > 0;
+        const pool = isRare ? rareIds.filter(f => !cards[f]) : normalIds.filter(f => !cards[f]);
+        if (pool.length === 0) continue;
+        const picked = pool[Math.floor(Math.random() * pool.length)];
+        cards[picked] = 1;
+      }
+      user = await createUser(n, cards);
+    }
     setMyData(user);
     setUsername(n);
-    // Carga trades y ranking
     const [tradesData, usersData] = await Promise.all([getTrades(), getAllUsers()]);
     setTrades(tradesData);
     setAllUsers(usersData);
@@ -185,7 +199,7 @@ export default function App() {
     setScreen("album");
   };
 
-const refreshTrades = async () => {
+  const refreshTrades = async () => {
     const tradesData = await getTrades();
     setTrades(tradesData);
   };
@@ -195,19 +209,10 @@ const refreshTrades = async () => {
     setAllUsers(usersData);
   };
 
-  // Auto-refresh cada 30 segundos
-  useEffect(() => {
-    if (!username) return;
-    const interval = setInterval(async () => {
-      const [tradesData, usersData] = await Promise.all([getTrades(), getAllUsers()]);
-      setTrades(tradesData);
-      setAllUsers(usersData);
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [username]);
-
   const openPack = async () => {
     if (!canOpen()) { showToast("⏰ Ya abriste tu sobre hoy. ¡Volvé mañana!"); return; }
+    if (packLocked) return; // Fix 3: bloquea doble click
+    setPackLocked(true);
     setOpening(true);
     await new Promise((r) => setTimeout(r, 900));
     const rareIds = FIGUS.filter((f) => f.rare).map((f) => f.id);
@@ -229,6 +234,7 @@ const refreshTrades = async () => {
     setLastPack([...newPack]);
     setLastPackUser(username);
     setOpening(false);
+    setPackLocked(false); // Fix 3: desbloquea después de abrir
     const news = newPack.filter((id) => !owned[id]).length;
     showToast(news > 0 ? `🎴 ¡${news} figurita${news > 1 ? "s nuevas" : " nueva"}!` : "🔄 Repetidas — ¡a intercambiar!");
   };
@@ -239,6 +245,9 @@ const refreshTrades = async () => {
     // Fix 1: no permitir más de un trade abierto por figurita
     const alreadyOpen = trades.some(t => t.from === username && t.give === tradeGive && t.status === "open");
     if (alreadyOpen) { showToast("⚠️ Ya tenés un intercambio abierto con esa figurita"); return; }
+    // Fix 5: límite de 5 trades abiertos por usuario
+    const myOpenTrades = trades.filter(t => t.from === username && t.status === "open").length;
+    if (myOpenTrades >= 5) { showToast("⚠️ Máximo 5 intercambios abiertos a la vez"); return; }
     const trade = { id: Date.now(), from: username, give: tradeGive, want: tradeWant, status: "open", ts: new Date().toISOString() };
     const newTrade = await createTrade(trade);
     setTrades((prev) => [...prev, newTrade]);
