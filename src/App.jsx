@@ -474,7 +474,7 @@ export default function App() {
               </>
             )}
             {tradeTab === "my" && (
-              trades.filter((t) => t.from === username).length === 0
+              trades.filter((t) => t.from === username && t.status !== "cancelled").length === 0
                 ? <p className="text-sm" style={{ color: "#6b3fa0" }}>No publicaste ofertas todavía.</p>
                 : trades.filter((t) => t.from === username).reverse().map((t) => (
                   <div key={t.docId} className="rounded-2xl p-3 mb-2" style={{ background: "#2d0050", border: `1px solid ${ACCENT}33` }}>
